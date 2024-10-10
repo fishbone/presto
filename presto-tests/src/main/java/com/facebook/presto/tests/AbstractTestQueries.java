@@ -55,6 +55,7 @@ import static com.facebook.presto.SystemSessionProperties.ENABLE_INTERMEDIATE_AG
 import static com.facebook.presto.SystemSessionProperties.FIELD_NAMES_IN_JSON_CAST_ENABLED;
 import static com.facebook.presto.SystemSessionProperties.GENERATE_DOMAIN_FILTERS;
 import static com.facebook.presto.SystemSessionProperties.HASH_PARTITION_COUNT;
+import static com.facebook.presto.SystemSessionProperties.INLINE_PROJECTIONS_ON_VALUES;
 import static com.facebook.presto.SystemSessionProperties.ITERATIVE_OPTIMIZER_TIMEOUT;
 import static com.facebook.presto.SystemSessionProperties.JOIN_PREFILTER_BUILD_SIDE;
 import static com.facebook.presto.SystemSessionProperties.KEY_BASED_SAMPLING_ENABLED;
@@ -1668,6 +1669,17 @@ public abstract class AbstractTestQueries
     }
 
     @Test
+    public void testUncorrelatedSubqueryWithEmptyResult()
+    {
+        assertQuery(
+                "SELECT regionkey, (select name from nation where false) from region",
+                "SELECT regionkey, NULL from region");
+        assertQuery(
+                "SELECT regionkey, (select name from nation where nationkey = 5 and mod(nationkey,5) = 1) from region",
+                "SELECT regionkey, NULL from region");
+    }
+
+    @Test
     public void testChecksum()
     {
         assertQuery("SELECT to_hex(checksum(0))", "SELECT '0000000000000000'");
@@ -3060,7 +3072,8 @@ public abstract class AbstractTestQueries
                 ImmutableMap.of(),
                 getSession().getTracer(),
                 getSession().getWarningCollector(),
-                getSession().getRuntimeStats());
+                getSession().getRuntimeStats(),
+                getSession().getQueryType());
         MaterializedResult result = computeActual(session, "SHOW SESSION");
 
         ImmutableMap<String, MaterializedRow> properties = Maps.uniqueIndex(result.getMaterializedRows(), input -> {
@@ -7418,6 +7431,7 @@ public abstract class AbstractTestQueries
         assertQuery("select x, case x when 1 then 1 when 2 then 2 else 3 end from (select x from (values 1, 2, 3, 4) t(x))");
         assertQuery("select x, case when x=1 then 1 when x=2 then 2 else 3 end from (select x from (values 1, 2, 3, 4) t(x))");
         assertQuery("select x, case when x=1 then 1 when x in (2, 3) then 2 else 3 end from (select x from (values 1, 2, 3, 4) t(x))");
+        assertQuery("select case (case true when true then true else coalesce(false = any (values true), true) end) when false then true end limit 1");
 
         // disable the feature and test to make sure it doesn't fire
 
@@ -7840,5 +7854,37 @@ public abstract class AbstractTestQueries
                 .setSystemProperty(OPTIMIZE_HASH_GENERATION, optimizeHashGeneration)
                 .build();
         assertQuery(session, "SELECT DISTINCT x FROM (VALUES (REAL '0.0'), (REAL '-0.0')) t(x)", "SELECT  CAST(0.0 AS REAL)");
+    }
+
+    @Test
+    public void testEvaluateProjectOnValues()
+    {
+        Session session = Session.builder(getSession())
+                .setSystemProperty(INLINE_PROJECTIONS_ON_VALUES, "true")
+                .build();
+        assertQuery(session,
+                "SELECT MAP(ARRAY[1,2,3],ARRAY['one','two','three'])[x] from (values 1,2) as t(x)",
+                "SELECT * FROM (VALUES 'one','two')");
+        assertQuery(session,
+                "SELECT CASE WHEN x<y THEN x ELSE y END from (values (1,2),(3,4)) as t(x,y)",
+                "SELECT * FROM (VALUES 1,3)");
+        assertQuery(session,
+                "SELECT MAP(ARRAY[ARRAY[1,1],ARRAY[2,2]],ARRAY[1,2])[x] from (values ARRAY[1,1]) as t(x)",
+                "SELECT * FROM (VALUES 1)");
+        assertQuery(session,
+                "SELECT SUBSTR(Y,1,1) FROM (SELECT SUBSTR(X, 1,2) FROM (VALUES 'abcd', 'efgh') AS T(X)) AS T(Y)",
+                "SELECT * FROM (VALUES 'a','e')");
+        assertQuery(session,
+                "SELECT a * 2, a * 4 from (VALUES 2, 4) t(a)",
+                "SELECT * FROM (VALUES (4,8),(8,16))");
+        assertQuery(session,
+                "SELECT a + 1 FROM (VALUES (1, 2), (3, 4)) t(a, b)",
+                "SELECT * FROM (VALUES 2, 4)");
+        assertQuery(session,
+                "WITH t1 as (SELECT a + 1 as a FROM (VALUES 6) as t(a)) SELECT a * 2, a - 1 FROM t1",
+                "SELECT * FROM (VALUES (14, 6))");
+        assertQuery(session,
+                "SELECT a * 2, a - 1 FROM (SELECT x * 2 as a FROM (VALUES 15) t(x))",
+                "SELECT * FROM (VALUES (60, 29))");
     }
 }

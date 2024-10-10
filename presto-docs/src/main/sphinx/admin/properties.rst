@@ -53,6 +53,36 @@ output data set is not skewed in order to avoid the overhead of hashing and
 redistributing all the data across the network. This can also be specified
 on a per-query basis using the ``redistribute_writes`` session property.
 
+``task_writer_count``
+^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``integer``
+* **Default value:** ``1``
+
+Default number of local parallel table writer threads per worker. It is required
+to be a power of two for a Java query engine.
+
+``task_partitioned_writer_count``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``integer``
+* **Default value:** ``task_writer_count``
+
+Number of local parallel table writer threads per worker for partitioned writes. If not
+set, the number set by ``task_writer_count`` will be used. It is required to be a power
+of two for a Java query engine.
+
+``eager-plan-validation-enabled``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``boolean``
+* **Default value:** ``false``
+
+This property enables the eager building and validation of a logical plan.
+When enabled, the logical plan will begin to be built and validated before
+queueing and allocation of cluster resources so that any errors or
+incompatibilities in the query plan will fail quickly and inform the user.
+
 .. _tuning-memory:
 
 Memory Management Properties
@@ -986,16 +1016,3 @@ system will keep logs for the past 15 days.
 * **Default value:** ``100MB``
 
 The maximum file size for the log file of the HTTP server.
-
-
-Legacy Compatible Properties
-------------------------------
-
-``legacy_json_cast``
-^^^^^^^^^^^^^^^^^^^^^
-
-* **Type:** ``boolean``
-* **Default value:** ``true``
-
-When casting from ``JSON`` to ``ROW``, ignore the case of field names in ``RowType`` for legacy support so that the matching is case-insensitive.
-Set ``legacy_json_cast`` to ``false`` to strictly enforce the case-sensitivity of double quoted field names in ``RowType`` when matching. Matching for unquoted field names remains case-insensitive.
